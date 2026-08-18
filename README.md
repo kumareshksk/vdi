@@ -41,3 +41,4 @@ public class TokenManipulator {
 [TokenManipulator]::AddPrivilege("SeDebugPrivilege")
 [TokenManipulator]::AddPrivilege("SeDebugPrivilege")
 whoami /priv | findstr Debug
+a#5udLyI0FRygMSEHNPnTJoQ
